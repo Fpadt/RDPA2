@@ -1,0 +1,47 @@
+# Hurricanes most harmful, Hail causes the greatest economic consequences
+output: 
+  html_document:
+    keep_md: true
+    
+```{r Global}
+library(data.table)
+library(ggplot2)
+opts_chunk$set("echo"= TRUE)
+```
+
+### Questions
+- Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?
+- Across the United States, which types of events have the greatest economic consequences?
+
+
+## Synopsis
+describes and summarizes the data analysis in less than 10 sentences?
+ 
+## Data Processing
+describes how the data were loaded into R and processed for analysis?
+
+### Loading and preprocessing the data
+
+```{r GetData, cache=TRUE}
+l_DestFile <- "StormData.bz2"
+download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2",
+              destfile = l_DestFile, mode = "wb")
+
+StormData <- read.csv(l_DestFile)
+
+head(StormData)
+
+str(StormData)
+```
+
+## Analysis
+Does the analysis include description and justification for any data transformations?
+
+## Results
+the main results are presented?
+at least one figure, no more than three
+descriptive captions (i.e. there is a description near the figure of what is happening in the figure)?
+
+```{r fig.width=7, fig.height=6}
+
+```
