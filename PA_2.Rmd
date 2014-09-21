@@ -1,12 +1,19 @@
-# Hurricanes most harmful, Hail causes the greatest economic consequences
-output: 
-  html_document:
-    keep_md: true
-    
+
+# Tornado most harmful, Flood greatest economic consequences
+
+
+### System Environment
 ```{r Global}
+library(knitr)
 library(data.table)
 library(ggplot2)
+library(xtable)
+
 opts_chunk$set("echo"= TRUE)
+
+rm(list=ls())
+
+sessionInfo()
 ```
 
 ### Questions
@@ -15,33 +22,329 @@ opts_chunk$set("echo"= TRUE)
 
 
 ## Synopsis
-describes and summarizes the data analysis in less than 10 sentences?
- 
+#### Harmful to population health
+The top types of events which are most harmful with respect to population health can be identified by sorting in descending order the sum of weighted fatalities and injuries caused by these events. the weighting factor is used to give more weigth to fatalities than injuries. 
+
+#### Greatest economic consequences
+The top types of events which have the greatest economic consequences can be found by sorting in decending order the sum of aggregated population damage and the crop damage. **Note that these damages are first unified to the same unit using the magnitude**  
+
+An analysis is conducted showing the number of occurrences and the impact
+
+---
+
 ## Data Processing
-describes how the data were loaded into R and processed for analysis?
+1. Data is downloaded from the cloudfront website in zipped (bz2) format. **Note: http protocol is used instead of https** 
+2. Data is read into a data.frame and converted to a data.table for analysis purposes.
+3. Data is transformed in a suitbale format for analysis, dates are coerced, the magnitudes of some values is applied and a weighting factor is used to unify harm.
 
-### Loading and preprocessing the data
+### Getting Data
 
-```{r GetData, cache=TRUE}
+```{r GettingData, cache=TRUE, eval=TRUE}
+# download the data in zipped format
 l_DestFile <- "StormData.bz2"
-download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2",
+download.file("http://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2",
               destfile = l_DestFile, mode = "wb")
 
+# read the zipped (bz2) file directly into object
 StormData <- read.csv(l_DestFile)
 
-head(StormData)
+# first lines of the data
+head(StormData, 5)
 
+# structure of the data
 str(StormData)
+
+# Coerce to data.table for furter analysis
+dtSD   <- as.data.table(StormData)
 ```
+
+### Cleaning & Transforming Data
+
+#### Coercion of BeginDate
+As can seen above the field BGN_DATE is a character field. First it is coerced to a date field, next a new column BGN_YR is added to the data which indicates the begin year. This field will be used to examine any trend. 
+
+```{r Coerce_BGN_DATE, results='hide'}
+dtSD[, BGN_DATE:= as.Date(BGN_DATE, "%m/%d/%Y")]
+dtSD[, YEAR:= year(BGN_DATE)]
+```
+
+#### Apply Magnitude
+
+The Data set uses alphabetical characters to signify magnitude. Only the following three are specified in the documentation 
+(see pag 12 of: https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf)
+
+- “K” for thousands
+- “M” for millions
+- “B” for billions 
+
+The following conversion table will be used:
+```{r Exp_Conversion}
+  # Conversion Table from character to numeric
+  dtEXP <- data.table(DMGEXP = c("K", "M", "B"),
+                      EXPONT = c(1e+03, 1e+06, 1e+09),
+                      key    = "DMGEXP")
+  dtEXP[order(EXPONT)]
+```
+
+A special function is created to unify all damage to the same unit.
+```{r fUnifyD}
+fUnifyD <- function(pData, pValue, pExp, pdtEXP){
+  
+  ldtEXP <- copy(pdtEXP)
+  
+  # set names and keys
+  setnames(ldtEXP, "DMGEXP", pExp)
+  setkeyv(pData, pExp)
+
+  # merge data tables to get exponent
+  pData <- merge(pData, ldtEXP, all.x = TRUE)
+  
+  # set all exponents of unknow characters to 1
+  pData[is.na(pData$EXPONT), EXPONT:= 1]
+  
+  # Multiply the Exponent with the value
+  pData[, eval(paste0("UNIF_", pValue)):= pData[,eval(pValue), with = FALSE] * EXPONT]
+  
+  # remove the exponent column
+  pData[, EXPONT:= NULL]
+  
+  return(pData)
+}
+```
+
+However it seems other characters are used. Those will be ignored and assumed to be 1e+00
+
+Table below shows which characters are used for Property Damage, their total value and the number of occurences.
+secondly the conversion function is used to convert the total value. 
+
+```{r Property_Damage}
+# Aggregate the data by Property Exponent Character
+dtPROP <- dtSD[, list(sum(PROPDMG), .N), by = PROPDMGEXP]
+
+# Changes col name: PROPDMG is the aggregated value by Property Exponent
+setnames(dtPROP, "V1", "PROPDMG")
+
+# Convert the aggregated value so it is unified
+dtPROP <- fUnifyD(dtPROP, "PROPDMG", "PROPDMGEXP", dtEXP)
+
+# sorted on UNIF_PROPDMG to show the impact of ignoring the other characters
+dtPROP[order(-UNIF_PROPDMG)]
+```
+
+Table below shows which characters are used for Crop Damage, their total value and the number of occurences.
+secondly the conversion function is used to convert the total value. 
+
+```{r Crop_Damage}
+# Aggregate the data by crop Exponent Character
+dtCROP <- dtSD[, list(sum(CROPDMG), .N), by = CROPDMGEXP]
+
+# Changes col name: CROPDMG is the aggregated value by Crop Exponent
+setnames(dtCROP, "V1", "CROPDMG")
+
+# Convert the aggregated value so it is unified
+dtCROP <- fUnifyD(dtCROP, "CROPDMG", "CROPDMGEXP", dtEXP)
+
+# sorted on UNIF_CROPDMG to show the impact of ignoring the other characters
+dtCROP[order(-UNIF_CROPDMG)]
+```
+
+Unify the damage of Crop and Property 
+```{r Unify_Damage, results='asis'}
+dtSD <- fUnifyD(dtSD, "PROPDMG", "PROPDMGEXP", dtEXP)
+dtSD <- fUnifyD(dtSD, "CROPDMG", "CROPDMGEXP", dtEXP)
+
+# Add both damages to come to 1 figure
+dtSD <- dtSD[,UNIF_DMG:= UNIF_PROPDMG + UNIF_CROPDMG]
+
+# Example how conversion took place
+print(xtable(
+             head(dtSD[(dtSD$PROPDMG > 0 & dtSD$PROPDMGEXP == "M") &
+                 (dtSD$CROPDMG > 0 & dtSD$CROPDMGEXP == "K"), 
+                 c("PROPDMG", "PROPDMGEXP", "CROPDMG", "CROPDMGEXP", 
+                   "UNIF_PROPDMG", "UNIF_CROPDMG", "UNIF_DMG"), 
+                   with = FALSE], 5)), type = 'html')
+```
+
+#### Weighting Fatalities and Injuries
+
+In order to unify Fatalities and Injuries to come to one unified indicator for ranking the events a weighting table will be used.  
+
+The following weights will be used to come to an overall figure for harmfullness 
+```{r dtWEIGHTS, results='asis'}
+dtWEIGHTS <- data.table(
+  TYPE = c("F", "I"),
+  DESC   = c("FATALITIES", "INJURIES"),
+  WEIGHT = c(5           , 1         )
+  )
+
+print(xtable(dtWEIGHTS), type = "html")
+```
+
+A special weighting-function is created to unify all harm to the same unit.
+
+```{r fUnifyH}
+fUnifyH <- function(pData, pValue, pdtWEIGHT){
+  
+  lweight <- dtWEIGHTS[DESC == pValue, "WEIGHT", with = FALSE]
+  
+  pData[, WEIGHT:= lweight]
+  
+  # Multiply the Weight with the value
+  pData[, eval(paste0("UNIF_", pValue)):= pData[, eval(pValue), with = FALSE] * WEIGHT]
+  
+  pData[, WEIGHT:= NULL]
+  
+  return(pData)
+}
+```
+
+Unify the harm done for Fatalities and Injuries, using a weighting
+
+```{r Unify_Harm, results='asis'}
+dtSD <- fUnifyH(dtSD, "INJURIES"  , dtWEIGHTS)
+dtSD <- fUnifyH(dtSD, "FATALITIES", dtWEIGHTS)
+
+# Generate an overall Hamrfulness figure
+dtSD <- dtSD[,UNIF_HRM:= UNIF_FATALITIES + UNIF_INJURIES]
+
+# Example how conversion took place
+print(xtable(
+             head(dtSD[dtSD$FATALITIES > 0 &
+                       dtSD$INJURIES   > 0, 
+                 c("FATALITIES", "INJURIES", 
+                   "UNIF_FATALITIES", "UNIF_INJURIES", "UNIF_HRM"), 
+                   with = FALSE], 5)), type = 'html')
+```
+
+---
 
 ## Analysis
 Does the analysis include description and justification for any data transformations?
 
-## Results
-the main results are presented?
-at least one figure, no more than three
-descriptive captions (i.e. there is a description near the figure of what is happening in the figure)?
+### Exploratory Analysis
 
-```{r fig.width=7, fig.height=6}
+The following picture shows the *Property Damage* and *Crop Damage* per event. 
+The size of the points and texts is determined by the total damage. 
+This figure shows that the most damage is done by: **FLOOD** and mainly due to the Property Damage.
+
+```{r EConsq_by_EVTYPE, results='asis'}
+
+dtEC <- dtSD[, list(sum(UNIF_PROPDMG), sum(UNIF_CROPDMG), sum(UNIF_DMG)),
+             by = list(EVTYPE)]
+setnames(dtEC, 
+         c("V1", "V2", "V3"),
+         c("UNIF_PROPDMG", "UNIF_CROPDMG", "UNIF_DMG"))
+dtEC <- dtEC[order(-UNIF_DMG)]
+
+ggEC <- ggplot(data = dtEC, aes(x = UNIF_PROPDMG, y = UNIF_CROPDMG, color = EVTYPE)) + 
+  geom_point(aes(size = UNIF_DMG), alpha = 0.6) +
+  scale_colour_discrete(guide = FALSE) +
+  labs(list(title = "Economic Consequences", x = "Property Damage", y = "Crop Damage")) +
+  geom_text(data = dtEC[1:10], aes(label = EVTYPE, size = UNIF_DMG)) + 
+  scale_size(range=c(3,10), guide = FALSE) + theme_bw()
+ggEC 
+
+# Top 10 with greatest Economic consequences
+print(xtable(dtEC[1:10,]), type = "html")
+```
+
+
+The following picture shows the *Property Damage* and *Crop Damage* per event. 
+The size of the points and texts is determined by the total damage. 
+This figure shows that the most damage is done by: **FLOOD** and mainly due to the Property Damage.
+
+```{r Harm_by_EVTYPE, results='asis'}
+
+dtHRM <- dtSD[, list(sum(UNIF_FATALITIES), sum(UNIF_INJURIES), sum(UNIF_HRM)),
+             by = list(EVTYPE)]
+setnames(dtHRM, 
+         c("V1", "V2", "V3"),
+         c("UNIF_FATALITIES", "UNIF_INJURIES", "UNIF_HRM"))
+dtHRM <- dtHRM[order(-UNIF_HRM)]
+
+ggHRM <- ggplot(data = dtHRM, aes(x = UNIF_FATALITIES, y = UNIF_INJURIES, color = EVTYPE)) + 
+  geom_point(aes(size = UNIF_HRM), alpha = 0.6) +
+  scale_colour_discrete(guide = FALSE) +
+  labs(list(title = "Harmful to population health", x = "Fatalities", y = "Injuries")) +
+  geom_text(data = dtHRM[1:10], aes(label = EVTYPE, size = UNIF_HRM)) + 
+  scale_size(range=c(3,10), guide = FALSE) + theme_bw()
+ggHRM 
+
+# Top 10 with greatest Economic consequences
+print(xtable(dtHRM[1:10,]), type = "html")
+```
+
+```{r}
+# library(gridExtra)
+
+# grid.arrange(ggEC, ggHRM, ncol=2)
 
 ```
+
+---
+## Results
+The Tables below show that *HAIL* is the most occurring, *FLOOD* results in the greatest economic Consequences and *TORNADO* causes the most harm to population health. 
+
+The following graph displays these tables in graphical form. 
+
+### Tables
+
+```{r ResultsTables, results='asis'}
+
+dtRES <- dtSD[, list(sum(UNIF_HRM), sum(UNIF_DMG), .N),
+             by = list(EVTYPE)]
+setnames(dtRES, 
+         c("V1", "V2", "N"),
+         c("UNIF_HRM", "UNIF_DMG", "COUNT"))
+```
+
+#### Occurences
+The Top 10 of events based upon occurrences are:
+
+```{r Top10_COUNT, results='asis'}
+# Top 10 with most occurrences
+dtRES <- dtRES[order(-COUNT)]
+print(xtable(dtRES[1:10,]), type = "html")
+```
+
+#### Harm to population health
+The Top 10 of events based upon harm to population health are:
+
+```{r Top10_HRM, results='asis'}
+# Top 10 with most harm done to populations health
+dtH <- dtRES[order(-UNIF_HRM)]
+print(xtable(dtH[1:10,]), type = "html")
+```
+#### Damage
+The Top 10 of events based upon damage are:
+
+```{r Top10_DMG, results='asis'}
+# Top 10 with greatest economic consequences
+dtD <- dtRES[order(-UNIF_DMG)]
+print(xtable(dtD[1:10,]), type = "html")
+```
+
+### Figure
+
+In the figure below the size of the point is an indication for how often this event occurred between 1950 and 2011. The position on the x-axis shows the total harm done to population health as on the y-axis it show the accompanying total damage done to property and crops.
+
+```{r ResultsGraphs}
+
+ggRES <- ggplot(data = dtRES, aes(x = UNIF_HRM, y = UNIF_DMG, color = EVTYPE)) + 
+  geom_point(aes(size = COUNT), alpha = 0.6) +
+  scale_colour_discrete(guide = FALSE) +
+  labs(list(title = "Harm, Damage and occurrences by Event", x = "Harm to polulations health", y = "damage to property and Crops")) +
+  geom_text(data = dtH[1:2], aes(label = EVTYPE, size = UNIF_HRM), hjust = .6) + 
+  geom_text(data = dtD[1:2], aes(label = EVTYPE, size = UNIF_DMG), hjust = .1) + 
+  scale_size(range=c(3,10), guide = FALSE) + theme_bw()
+ggRES
+```
+
+---
+
+## Conclusion
+In order to minimize harm done to populations health the impact of *Tornado's* should be minimized. This however will be very difficult and is one of the main effect of **Global warming**
+
+In order to minimize the damage done by *FLOODS* one should reinforce the dike's. 
+
+**Note that the number of occurrences of Tornado's and Floods is (luckily) not that many. However if one occurs the damgae/harm done is substantial.** 
